@@ -1,107 +1,204 @@
-﻿namespace Evaluator.Core;
+﻿namespace Evaluator.Core{
 
-public class ExpressionEvaluator
-{
-    public static double Evaluate(string infix)
-    {
-        var postfix = InfixToPostfix(infix);
-        return Calulate(postfix);
-    }
+    using System;
+    using System.Collections.Generic;
+    using System.Globalization;
 
-    private static string InfixToPostfix(string infix)
+    public static class ExpressionEvaluator
     {
-        var stack = new Stack<char>();
-        var postfix = string.Empty;
-        foreach (char item in infix)
+        public static double Evaluate(string expression) => Evaluate(expression, CultureInfo.InvariantCulture);
+
+
+        public static double Evaluate(string expression, CultureInfo culture)
         {
-            if (IsOperator(item))
+            if (string.IsNullOrWhiteSpace(expression))
+                throw new ArgumentException("Expression is empty.", nameof(expression));
+
+            var decimalSep = culture.NumberFormat.NumberDecimalSeparator;
+            if (decimalSep != ".")
+                expression = expression.Replace(decimalSep, ".");
+
+            var tokens = Tokenize(expression);
+            var rpn = ToRPN(tokens);
+            return EvalRPN(rpn, culture);
+        }
+
+        private static List<string> Tokenize(string expr)
+        {
+            var tokens = new List<string>();
+            int i = 0;
+            while (i < expr.Length)
             {
-                if (item == ')')
+                char c = expr[i];
+
+                if (char.IsWhiteSpace(c))
                 {
-                    do
+                    i++; continue;
+                }
+
+                if (char.IsDigit(c) || c == '.')
+                {
+                    int start = i;
+                    bool dotSeen = (c == '.');
+                    i++;
+                    while (i < expr.Length && (char.IsDigit(expr[i]) || (expr[i] == '.' && !dotSeen)))
                     {
-                        postfix += stack.Pop();
-                    } while (stack.Peek() != '(');
-                    stack.Pop();
+                        if (expr[i] == '.') dotSeen = true;
+                        i++;
+                    }
+                    tokens.Add(expr.Substring(start, i - start));
+                    continue;
+                }
+
+                if ("+-*/^()".IndexOf(c) >= 0)
+                {
+
+                    if (c == '-')
+                    {
+                        bool isUnary = false;
+                        if (tokens.Count == 0) isUnary = true;
+                        else
+                        {
+                            var prev = tokens[tokens.Count - 1];
+                            if (IsOperator(prev) || prev == "(") isUnary = true;
+                        }
+
+                        if (isUnary)
+                        {
+
+                            tokens.Add("u-");
+                            i++;
+                            continue;
+                        }
+                    }
+
+                    tokens.Add(c.ToString());
+                    i++;
+                    continue;
+                }
+
+                throw new Exception($"Unexpected character at position {i}: '{c}'");
+            }
+
+            return tokens;
+        }
+
+        private static readonly Dictionary<string, (int prec, bool right)> operators = new Dictionary<string, (int, bool)>()
+    {
+        { "+", (2, false) },
+        { "-", (2, false) },
+        { "*", (3, false) },
+        { "/", (3, false) },
+        { "^", (4, true) },
+        { "u-", (5, true) }
+    };
+
+        private static bool IsOperator(string token) => operators.ContainsKey(token);
+
+        private static Queue<string> ToRPN(List<string> tokens)
+        {
+            var output = new Queue<string>();
+            var ops = new Stack<string>();
+
+            foreach (var token in tokens)
+            {
+                if (double.TryParse(token, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
+                {
+                    output.Enqueue(token);
+                }
+                else if (IsOperator(token))
+                {
+                    while (ops.Count > 0 && IsOperator(ops.Peek()))
+                    {
+                        var top = ops.Peek();
+                        var cur = operators[token];
+                        var topinfo = operators[top];
+
+                        if ((cur.right == false && cur.prec <= topinfo.prec) ||
+                            (cur.right == true && cur.prec < topinfo.prec))
+                        {
+                            output.Enqueue(ops.Pop());
+                        }
+                        else break;
+                    }
+                    ops.Push(token);
+                }
+                else if (token == "(")
+                {
+                    ops.Push(token);
+                }
+                else if (token == ")")
+                {
+                    while (ops.Count > 0 && ops.Peek() != "(")
+                        output.Enqueue(ops.Pop());
+
+                    if (ops.Count == 0 || ops.Peek() != "(")
+                        throw new Exception("Mismatched parentheses.");
+                    ops.Pop();
                 }
                 else
                 {
-                    if (stack.Count > 0)
-                    {
-                        if (PriorityInfix(item) > PriorityStack(stack.Peek()))
-                        {
-                            stack.Push(item);
-                        }
-                        else
-                        {
-                            postfix += stack.Pop();
-                            stack.Push(item);
-                        }
-                    }
-                    else
-                    {
-                        stack.Push(item);
-                    }
+                    throw new Exception($"Unknown token '{token}'");
                 }
             }
-            else
+
+            while (ops.Count > 0)
             {
-                postfix += item;
+                var t = ops.Pop();
+                if (t == "(" || t == ")")
+                    throw new Exception("Mismatched parentheses.");
+                output.Enqueue(t);
             }
+
+            return output;
         }
-        while (stack.Count > 0)
+
+        private static double EvalRPN(Queue<string> rpn, CultureInfo culture)
         {
-            postfix += stack.Pop();
-        }
-        return postfix;
-    }
+            var st = new Stack<double>();
 
-    private static bool IsOperator(char item) => item is '^' or '/' or '*' or '%' or '+' or '-' or '(' or ')';
-
-    private static int PriorityInfix(char op) => op switch
-    {
-        '^' => 4,
-        '*' or '/' or '%' => 2,
-        '-' or '+' => 1,
-        '(' => 5,
-        _ => throw new Exception("Invalid expression."),
-    };
-
-    private static int PriorityStack(char op) => op switch
-    {
-        '^' => 3,
-        '*' or '/' or '%' => 2,
-        '-' or '+' => 1,
-        '(' => 0,
-        _ => throw new Exception("Invalid expression."),
-    };
-
-    private static double Calulate(string postfix)
-    {
-        var stack = new Stack<double>();
-        foreach (char item in postfix)
-        {
-            if (IsOperator(item))
+            while (rpn.Count > 0)
             {
-                var op2 = stack.Pop();
-                var op1 = stack.Pop();
-                stack.Push(Calulate(op1, item, op2));
+                var token = rpn.Dequeue();
+                if (double.TryParse(token, NumberStyles.Number, CultureInfo.InvariantCulture, out double val))
+                {
+                    st.Push(val);
+                }
+                else if (token == "u-")
+                {
+                    if (st.Count < 1) throw new Exception("Invalid expression: unary minus has no operand.");
+                    var a = st.Pop();
+                    st.Push(-a);
+                }
+                else if (IsOperator(token))
+                {
+                    if (st.Count < 2) throw new Exception("Invalid expression: operator needs two operands.");
+                    var b = st.Pop();
+                    var a = st.Pop();
+                    switch (token)
+                    {
+                        case "+": st.Push(a + b); break;
+                        case "-": st.Push(a - b); break;
+                        case "*": st.Push(a * b); break;
+                        case "/":
+                            if (b == 0) throw new DivideByZeroException("Division by zero.");
+                            st.Push(a / b);
+                            break;
+                        case "^":
+                            st.Push(Math.Pow(a, b));
+                            break;
+                        default:
+                            throw new Exception($"Unsupported operator '{token}'");
+                    }
+                }
+                else
+                {
+                    throw new Exception($"Unexpected RPN token '{token}'");
+                }
             }
-            else
-            {
-                stack.Push(Convert.ToDouble(item.ToString()));
-            }
-        }
-        return stack.Peek();
-    }
 
-    private static double Calulate(double op1, char item, double op2) => item switch
-    {
-        '*' => op1 * op2,
-        '/' => op1 / op2,
-        '^' => Math.Pow(op1, op2),
-        '+' => op1 + op2,
-        '-' => op1 - op2,
-        _ => throw new Exception("Invalid expression."),
-    };
+            if (st.Count != 1) throw new Exception("Invalid expression evaluation.");
+            return st.Pop();
+        }
+    }
 }

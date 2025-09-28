@@ -7,5 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-
+ <ItemGroup>
+      <ProjectReference Include="..\Evaluator.Core\Evaluator.Core.csproj" />
+    </ItemGroup>
 </Project>
